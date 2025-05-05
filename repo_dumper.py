@@ -1,7 +1,6 @@
-# Import necessary libraries
 import os
 import argparse
-import pathspec 
+import pathspec
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 
@@ -12,6 +11,23 @@ FILE_NAME_MARKER = "###### File: "
 TREE_HEADER = "### Repository Structure:"
 CONTENT_HEADER = "### Repository Contents:"
 CODE_BLOCK_MARKER = "````````````"
+BINARY_CHUNK_SIZE = 1024 # Bytes to read for binary detection
+
+def is_binary(file_path: Path) -> bool:
+    """
+    Checks if a file is likely binary by reading a chunk and looking for null bytes.
+    Handles potential read errors gracefully.
+    """
+    try:
+        with file_path.open('rb') as f:
+            chunk = f.read(BINARY_CHUNK_SIZE)
+        return b'\x00' in chunk
+    except IOError as e:
+        print(f"Warning: Could not read file {file_path} for binary check: {e}")
+        return False # Assume not binary if read fails
+    except Exception as e:
+        print(f"Warning: Unexpected error checking if {file_path} is binary: {e}")
+        return False # Assume not binary on unexpected errors
 
 def load_gitignore(repo_path: Path) -> Optional[pathspec.PathSpec]:
     """
@@ -186,19 +202,26 @@ def dump_repo(repo_path: Path, output_file: Path):
             for relative_path in files:
                 full_path = repo_path / relative_path
                 relative_path_str = str(relative_path).replace(os.sep, '/')
-                print(f"  Dumping: {relative_path_str}")
+                print(f"  Processing: {relative_path_str}")
 
                 out.write(f"{FILE_NAME_MARKER}{relative_path_str}\n")
                 out.write(f"{CODE_BLOCK_MARKER}\n")
-                try:
-                    content = full_path.read_text(encoding='utf-8', errors='ignore')
-                    out.write(content)
-                    if content and not content.endswith('\n'):
-                         out.write('\n')
-                except IOError as e:
-                    out.write(f"Error reading file: {e}\n")
-                except Exception as e:
-                    out.write(f"Error processing file: {e}\n")
+
+                if is_binary(full_path):
+                    print(f"    Skipping binary file content: {relative_path_str}")
+                    out.write("[Binary file content skipped]\n")
+                else:
+                    print(f"    Dumping text content: {relative_path_str}")
+                    try:
+                        content = full_path.read_text(encoding='utf-8', errors='ignore')
+                        out.write(content)
+                        if content and not content.endswith('\n'):
+                             out.write('\n')
+                    except IOError as e:
+                        out.write(f"Error reading file: {e}\n")
+                    except Exception as e:
+                        out.write(f"Error processing file: {e}\n")
+
                 out.write(f"{CODE_BLOCK_MARKER}\n\n")
 
         print(f"Successfully dumped repository to {output_file}")
@@ -230,7 +253,7 @@ def restore_repo(input_file: Path, output_dir: Path):
 
         current_file_path: Optional[Path] = None
         content_buffer: List[str] = []
-        state = 0
+        state = 0 # 0 = looking for file marker, 1 = looking for start code block, 2 = inside code block
 
         for line_num, line in enumerate(lines):
             stripped_line = line.strip()
@@ -252,16 +275,21 @@ def restore_repo(input_file: Path, output_dir: Path):
             elif state == 2:
                 if stripped_line == CODE_BLOCK_MARKER:
                     if current_file_path:
-                        print(f"  Restoring: {current_file_path}")
                         full_output_path = output_dir / current_file_path
-                        try:
-                            full_output_path.parent.mkdir(parents=True, exist_ok=True)
-                            with full_output_path.open('w', encoding='utf-8', newline='\n') as out_f:
-                                out_f.write("".join(content_buffer))
-                        except IOError as e:
-                            print(f"Error writing file {full_output_path}: {e}")
-                        except Exception as e:
-                             print(f"An unexpected error occurred writing {full_output_path}: {e}")
+                        file_content = "".join(content_buffer)
+
+                        if file_content.strip() == "[Binary file content skipped]":
+                             print(f"  Skipping restore (binary placeholder): {current_file_path}")
+                        else:
+                            print(f"  Restoring: {current_file_path}")
+                            try:
+                                full_output_path.parent.mkdir(parents=True, exist_ok=True)
+                                with full_output_path.open('w', encoding='utf-8', newline='\n') as out_f:
+                                    out_f.write(file_content)
+                            except IOError as e:
+                                print(f"Error writing file {full_output_path}: {e}")
+                            except Exception as e:
+                                 print(f"An unexpected error occurred writing {full_output_path}: {e}")
 
                     current_file_path = None
                     content_buffer = []
