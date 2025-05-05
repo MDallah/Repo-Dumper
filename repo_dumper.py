@@ -72,24 +72,35 @@ def load_gitignore(repo_path: Path) -> Optional[pathspec.PathSpec]:
         return None
 
 
-def list_files(repo_path: Path, spec: Optional[pathspec.PathSpec]) -> List[Path]:
+def list_files(
+    repo_path: Path,
+    gitignore_spec: Optional[pathspec.PathSpec],
+    include_patterns: Optional[List[str]],
+    exclude_patterns: Optional[List[str]],
+    output_file_path: Path
+) -> List[Path]:
     """
-    Lists all files in the repository, respecting the gitignore spec,
+    Lists all files in the repository, respecting gitignore, include/exclude patterns,
     and excluding the .git directory and the output file itself.
 
     Args:
         repo_path: Path to the repository root directory.
-        spec: The loaded pathspec.PathSpec object from .gitignore.
+        gitignore_spec: The loaded pathspec.PathSpec object from .gitignore.
+        include_patterns: List of glob patterns to explicitly include.
+        exclude_patterns: List of glob patterns to explicitly exclude.
+        output_file_path: The absolute path to the output file being generated.
 
     Returns:
         A list of Path objects, relative to the repo_path.
     """
     file_list: List[Path] = []
     abs_repo_path = repo_path.resolve()
-    abs_output_file = Path(DEFAULT_OUTPUT_FILE).resolve()
+
+    include_spec = pathspec.PathSpec.from_lines('gitwildmatch', include_patterns or [])
+    exclude_spec = pathspec.PathSpec.from_lines('gitwildmatch', exclude_patterns or [])
 
     for item in abs_repo_path.rglob('*'):
-        if item.resolve() == abs_output_file:
+        if item.resolve() == output_file_path:
             print(f"Info: Skipping self (output file): {item}")
             continue
 
@@ -106,12 +117,29 @@ def list_files(repo_path: Path, spec: Optional[pathspec.PathSpec]) -> List[Path]
             continue
 
         relative_path_str = str(relative_path).replace(os.sep, '/')
-        if spec and spec.match_file(relative_path_str):
+
+        # 1. Check explicit excludes
+        if exclude_spec.match_file(relative_path_str):
+            # print(f"Debug: Excluding '{relative_path_str}' due to exclude pattern.")
             continue
 
+        # 2. Check explicit includes (overrides .gitignore)
+        is_included = include_spec.match_file(relative_path_str)
+        if is_included:
+            # print(f"Debug: Including '{relative_path_str}' due to include pattern.")
+            file_list.append(relative_path)
+            continue
+
+        # 3. Check .gitignore (if not explicitly included)
+        if gitignore_spec and gitignore_spec.match_file(relative_path_str):
+            # print(f"Debug: Excluding '{relative_path_str}' due to .gitignore.")
+            continue
+
+        # 4. If not excluded, not explicitly included, and not gitignored, add it.
+        # print(f"Debug: Including '{relative_path_str}' by default.")
         file_list.append(relative_path)
 
-    return sorted(file_list)
+    return sorted(list(set(file_list))) # Use set to avoid duplicates if patterns overlap weirdly
 
 
 def build_tree(files: List[Path]) -> Dict[str, Any]:
@@ -164,21 +192,27 @@ def print_tree(tree: Dict[str, Any], prefix: str = '') -> List[str]:
     return lines
 
 
-def dump_repo(repo_path: Path, output_file: Path):
+def dump_repo(
+    repo_path: Path,
+    output_file: Path,
+    include_patterns: Optional[List[str]],
+    exclude_patterns: Optional[List[str]]
+):
     """Dumps the repository structure and file contents to a single markdown file."""
     if not repo_path.is_dir():
         print(f"Error: Repository path '{repo_path}' not found or not a directory.")
         return
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
+    abs_output_file = output_file.resolve() # Resolve early for list_files
 
     print(f"Loading .gitignore from {repo_path}...")
-    spec = load_gitignore(repo_path)
+    gitignore_spec = load_gitignore(repo_path)
 
     print(f"Listing files in {repo_path}...")
-    files = list_files(repo_path, spec)
+    files = list_files(repo_path, gitignore_spec, include_patterns, exclude_patterns, abs_output_file)
     if not files:
-        print("Warning: No files found to dump (after applying .gitignore rules).")
+        print("Warning: No files found to dump (after applying filters).")
 
     print(f"Building file tree...")
     tree = build_tree(files)
@@ -344,6 +378,19 @@ def main():
     dump_parser = subparsers.add_parser('dump', help='Dump repository structure and content to a text file.')
     dump_parser.add_argument('repo', type=Path, help='Path to the repository directory to dump.')
     dump_parser.add_argument('-o', '--output', type=Path, default=Path(DEFAULT_OUTPUT_FILE), help='Output text file path.')
+    dump_parser.add_argument(
+        '-i', '--include',
+        nargs='*',
+        help='Glob patterns for files to explicitly include (overrides .gitignore).',
+        metavar='PATTERN'
+    )
+    dump_parser.add_argument(
+        '-e', '--exclude',
+        nargs='*',
+        help='Glob patterns for files/directories to exclude.',
+        metavar='PATTERN'
+    )
+
 
     # --- Restore arguments ---
     restore_parser = subparsers.add_parser('restore', help='Restore repository from a text dump file.')
@@ -355,7 +402,7 @@ def main():
     if args.command == 'dump':
         repo_path = args.repo.resolve()
         output_path = args.output.resolve()
-        dump_repo(repo_path, output_path)
+        dump_repo(repo_path, output_path, args.include, args.exclude)
     elif args.command == 'restore':
         input_path = args.input.resolve()
         dest_path = args.dest.resolve()
