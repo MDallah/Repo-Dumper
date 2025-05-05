@@ -205,7 +205,11 @@ def dump_repo(repo_path: Path, output_file: Path):
                 print(f"  Processing: {relative_path_str}")
 
                 out.write(f"{FILE_NAME_MARKER}{relative_path_str}\n")
-                out.write(f"{CODE_BLOCK_MARKER}\n")
+
+                extension = relative_path.suffix
+                lang_identifier = extension[1:] if extension else '' # Remove leading dot
+
+                out.write(f"{CODE_BLOCK_MARKER}{lang_identifier}\n")
 
                 if is_binary(full_path):
                     print(f"    Skipping binary file content: {relative_path_str}")
@@ -254,11 +258,46 @@ def restore_repo(input_file: Path, output_dir: Path):
         current_file_path: Optional[Path] = None
         content_buffer: List[str] = []
         state = 0 # 0 = looking for file marker, 1 = looking for start code block, 2 = inside code block
+        inside_code_block = False
 
         for line_num, line in enumerate(lines):
-            stripped_line = line.strip()
+            # Check for code block markers regardless of state to handle transitions
+            if line.strip().startswith(CODE_BLOCK_MARKER):
+                if not inside_code_block:
+                    # Entering a code block
+                    if state == 1: # We were expecting this after a file marker
+                        state = 2
+                    # Else: Could be the tree structure block, ignore content until next marker
+                    inside_code_block = True
+                else:
+                    # Exiting a code block
+                    if state == 2: # We were inside a file content block
+                        if current_file_path:
+                            full_output_path = output_dir / current_file_path
+                            file_content = "".join(content_buffer)
 
-            if state == 0:
+                            if file_content.strip() == "[Binary file content skipped]":
+                                 print(f"  Skipping restore (binary placeholder): {current_file_path}")
+                            else:
+                                print(f"  Restoring: {current_file_path}")
+                                try:
+                                    full_output_path.parent.mkdir(parents=True, exist_ok=True)
+                                    with full_output_path.open('w', encoding='utf-8', newline='\n') as out_f:
+                                        out_f.write(file_content)
+                                except IOError as e:
+                                    print(f"Error writing file {full_output_path}: {e}")
+                                except Exception as e:
+                                     print(f"An unexpected error occurred writing {full_output_path}: {e}")
+
+                        current_file_path = None
+                        content_buffer = []
+                        state = 0 # Look for the next file marker
+                    # Else: Exiting the tree structure block or some other block, just reset flag
+                    inside_code_block = False
+                continue # Skip processing the marker line itself as content
+
+            # --- State machine logic ---
+            if state == 0: # Looking for file marker
                 if line.startswith(FILE_NAME_MARKER):
                     relative_path_str = line[len(FILE_NAME_MARKER):].strip()
                     if not relative_path_str:
@@ -266,39 +305,20 @@ def restore_repo(input_file: Path, output_dir: Path):
                         continue
                     current_file_path = Path(relative_path_str)
                     content_buffer = []
-                    state = 1
+                    state = 1 # Now look for the start code block
 
-            elif state == 1:
-                if stripped_line == CODE_BLOCK_MARKER:
-                    state = 2
+            # elif state == 1: # Looking for start code block
+                # This state is effectively handled by the general code block marker check above
 
-            elif state == 2:
-                if stripped_line == CODE_BLOCK_MARKER:
-                    if current_file_path:
-                        full_output_path = output_dir / current_file_path
-                        file_content = "".join(content_buffer)
-
-                        if file_content.strip() == "[Binary file content skipped]":
-                             print(f"  Skipping restore (binary placeholder): {current_file_path}")
-                        else:
-                            print(f"  Restoring: {current_file_path}")
-                            try:
-                                full_output_path.parent.mkdir(parents=True, exist_ok=True)
-                                with full_output_path.open('w', encoding='utf-8', newline='\n') as out_f:
-                                    out_f.write(file_content)
-                            except IOError as e:
-                                print(f"Error writing file {full_output_path}: {e}")
-                            except Exception as e:
-                                 print(f"An unexpected error occurred writing {full_output_path}: {e}")
-
-                    current_file_path = None
-                    content_buffer = []
-                    state = 0
-                else:
+            elif state == 2: # Inside code block (and it's for a file)
+                if inside_code_block: # Double check we are still inside
                     content_buffer.append(line)
+                # Else: Should have been transitioned out by marker check above
 
         if state != 0:
-            print(f"Warning: Dump file ended unexpectedly. State was {state}. Last processed file might be incomplete: {current_file_path}")
+             print(f"Warning: Dump file may have ended unexpectedly or parsing finished in an intermediate state ({state}).")
+        if current_file_path is not None:
+            print(f"Warning: Processing ended while handling file '{current_file_path}'. It might be incomplete.")
 
         print(f"\nSuccessfully finished attempting restoration to {output_dir}")
 
