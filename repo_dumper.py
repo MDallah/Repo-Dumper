@@ -57,8 +57,8 @@ def load_gitignore(repo_path: Path) -> Optional[pathspec.PathSpec]:
                 print(f"Warning: Failed to read {GITIGNORE_FILE} with encoding '{enc}'")
                 continue
             except Exception as e:
-                 print(f"Warning: Could not read {gitignore_path} with encoding '{enc}': {e}")
-                 continue
+                print(f"Warning: Could not read {gitignore_path} with encoding '{enc}': {e}")
+                continue
 
         if content is None:
             print(f"Warning: Could not read {gitignore_path} with any attempted encoding.")
@@ -108,8 +108,8 @@ def list_files(
         try:
             relative_path = item.relative_to(abs_repo_path)
         except ValueError:
-             print(f"Warning: Skipping item outside repo base: {item}")
-             continue
+            print(f"Warning: Skipping item outside repo base: {item}")
+            continue
 
         if not item.is_file():
             continue
@@ -155,13 +155,13 @@ def build_tree(files: List[Path]) -> Dict[str, Any]:
                 if part in current_level and isinstance(current_level[part], dict):
                     print(f"Warning: File '{file_path}' conflicts with an existing directory structure entry. Skipping file entry in tree.")
                 else:
-                     current_level[part] = None
+                    current_level[part] = None
             else:
                 if part not in current_level:
                     current_level[part] = {}
                 elif current_level[part] is None:
-                     print(f"Warning: Directory component '{part}' in '{file_path}' conflicts with an existing file entry. Overwriting file entry with directory in tree.")
-                     current_level[part] = {}
+                    print(f"Warning: Directory component '{part}' in '{file_path}' conflicts with an existing file entry. Overwriting file entry with directory in tree.")
+                    current_level[part] = {}
 
                 if isinstance(current_level.get(part), dict):
                     current_level = current_level[part]
@@ -181,14 +181,14 @@ def print_tree(tree: Dict[str, Any], prefix: str = '') -> List[str]:
         connector = '└── ' if is_last else '├── '
 
         if subtree is None:
-             lines.append(f"{prefix}{connector}{name}")
+            lines.append(f"{prefix}{connector}{name}")
         else:
             lines.append(f"{prefix}{connector}{name}/")
             extension = '    ' if is_last else '│   '
             if isinstance(subtree, dict):
                 lines.extend(print_tree(subtree, prefix + extension))
             else:
-                 print(f"Warning: Expected dictionary for directory '{name}' in tree, but found {type(subtree)}. Skipping recursion.")
+                print(f"Warning: Expected dictionary for directory '{name}' in tree, but found {type(subtree)}. Skipping recursion.")
 
     return lines
 
@@ -199,7 +199,10 @@ def dump_repo(
     include_patterns: Optional[List[str]],
     exclude_patterns: Optional[List[str]]
 ):
-    """Dumps the repository structure and file contents to a single markdown file."""
+    """
+    Dumps the repository structure and file contents to a single markdown file,
+    with binary files listed at the end.
+    """
     if not repo_path.is_dir():
         print(f"Error: Repository path '{repo_path}' not found or not a directory.")
         return
@@ -211,12 +214,28 @@ def dump_repo(
     gitignore_spec = load_gitignore(repo_path)
 
     print(f"Listing files in {repo_path}...")
-    files = list_files(repo_path, gitignore_spec, include_patterns, exclude_patterns, abs_output_file)
-    if not files:
+    all_files = list_files(repo_path, gitignore_spec, include_patterns, exclude_patterns, abs_output_file)
+    if not all_files:
         print("Warning: No files found to dump (after applying filters).")
+        # Still create an empty dump file with headers if needed
+        # return # Or decide to proceed and create an empty dump
 
-    print(f"Building file tree...")
-    tree = build_tree(files)
+    print("Separating text and binary files...")
+    text_files: List[Path] = []
+    binary_files: List[Path] = []
+    for relative_path in all_files:
+        full_path = repo_path / relative_path
+        if is_binary(full_path):
+            binary_files.append(relative_path)
+            print(f"  Identified as binary: {relative_path}")
+        else:
+            text_files.append(relative_path)
+            print(f"  Identified as text: {relative_path}")
+    print(f"  Found {len(text_files)} text files and {len(binary_files)} binary files.")
+
+    print(f"Building file tree for all {len(all_files)} files...")
+    # Build tree using all files so structure representation is complete
+    tree = build_tree(all_files)
 
     print(f"Writing dump to {output_file}...")
     try:
@@ -224,7 +243,7 @@ def dump_repo(
             repo_name = repo_path.resolve().name
             out.write(f"# Repository: {repo_name}\n\n")
 
-            # --- Write File Structure ---
+            # --- Write File Structure (based on all files) ---
             out.write(f"{TREE_HEADER}\n")
             out.write(f"{CODE_BLOCK_MARKER}\n")
             out.write(f"/{repo_name}/\n")
@@ -234,34 +253,56 @@ def dump_repo(
 
             # --- Write File Contents ---
             out.write(f"{CONTENT_HEADER}\n\n")
-            for relative_path in files:
-                full_path = repo_path / relative_path
-                relative_path_str = str(relative_path).replace(os.sep, '/')
-                print(f"  Processing: {relative_path_str}")
 
-                out.write(f"{FILE_NAME_MARKER}{relative_path_str}\n")
+            # Process text files first
+            if text_files:
+                #print("Writing text file contents...")
+                for relative_path in text_files:
+                    full_path = repo_path / relative_path
+                    relative_path_str = str(relative_path).replace(os.sep, '/')
+                    print(f"  Dumping text content: {relative_path_str}")
 
-                extension = relative_path.suffix
-                lang_identifier = extension[1:] if extension else '' # Remove leading dot
+                    out.write(f"{FILE_NAME_MARKER}{relative_path_str}\n")
+                    extension = relative_path.suffix
+                    lang_identifier = extension[1:] if extension else ''
+                    out.write(f"{CODE_BLOCK_MARKER}{lang_identifier}\n")
 
-                out.write(f"{CODE_BLOCK_MARKER}{lang_identifier}\n")
-
-                if is_binary(full_path):
-                    print(f"    Skipping binary file content: {relative_path_str}")
-                    out.write("[Binary file content skipped]\n")
-                else:
-                    print(f"    Dumping text content: {relative_path_str}")
                     try:
                         content = full_path.read_text(encoding='utf-8', errors='ignore')
+                        # Ensure consistent line endings (replace windows \r\n with \n)
+                        content = content.replace('\r\n', '\n').replace('\r', '\n')
                         out.write(content)
                         if content and not content.endswith('\n'):
-                             out.write('\n')
+                            out.write('\n') # Ensure newline at the end
                     except IOError as e:
                         out.write(f"Error reading file: {e}\n")
                     except Exception as e:
                         out.write(f"Error processing file: {e}\n")
 
-                out.write(f"{CODE_BLOCK_MARKER}\n\n")
+                    out.write(f"{CODE_BLOCK_MARKER}\n\n")
+
+            # Process binary files last
+            if binary_files:
+                #print("Writing binary file placeholders...")
+                # Optional: Add a small header indicating binary section
+                # out.write("---\n")
+                # out.write("### Binary Files (Content Skipped)\n\n")
+
+                for relative_path in binary_files:
+                    # full_path = repo_path / relative_path # Not strictly needed for content
+                    relative_path_str = str(relative_path).replace(os.sep, '/')
+                    print(f"  Placeholder for binary: {relative_path_str}")
+
+                    out.write(f"{FILE_NAME_MARKER}{relative_path_str}\n")
+                    extension = relative_path.suffix
+                    lang_identifier = extension[1:] if extension else '' # Keep consistent structure
+                    # Add language identifier even for binary for consistency, though less useful
+                    out.write(f"{CODE_BLOCK_MARKER}{lang_identifier}\n")
+
+                    out.write("[Binary file content skipped]\n") # The placeholder
+
+                    out.write(f"{CODE_BLOCK_MARKER}\n\n")
+
 
         print(f"Successfully dumped repository to {output_file}")
 
@@ -284,8 +325,8 @@ def restore_repo(input_file: Path, output_dir: Path):
         return
     
     if output_dir.exists():
-            print(f"Warning: Output directory '{output_dir}' already exists. It will be overwritten.")
-            userInput = input("Do you want to proceed? ([Y]/n): ").strip().lower()
+            print(f"Warning: The output directory already exists. It will be overwritten.")
+            userInput = input("Do you want to proceed? ([Y]/n): \n").strip().lower()
             if userInput in ['', 'true', 'y', 'yes']:
                 # Remove existing directory
                 shutil.rmtree(output_dir)
@@ -319,20 +360,34 @@ def restore_repo(input_file: Path, output_dir: Path):
                     if state == 2: # We were inside a file content block
                         if current_file_path:
                             full_output_path = output_dir / current_file_path
+                            # Join lines and potentially normalize line endings if needed during write
                             file_content = "".join(content_buffer)
 
                             if file_content.strip() == "[Binary file content skipped]":
-                                 print(f"  Skipping restore (binary placeholder): {current_file_path}")
+                                print(f"  Skipping restore (binary placeholder): {current_file_path}")
+                                # Optionally create an empty file or skip entirely
+                                try:
+                                    full_output_path.parent.mkdir(parents=True, exist_ok=True)
+                                    # Create an empty file to represent the binary file's presence
+                                    #with full_output_path.open('w', encoding='utf-8') as out_f:
+                                        #pass # Just create the file
+                                    #print(f"    (Created empty file for {current_file_path})")
+                                except IOError as e:
+                                    print(f"Error creating empty file placeholder {full_output_path}: {e}")
+                                except Exception as e:
+                                    print(f"An unexpected error occurred creating placeholder {full_output_path}: {e}")
                             else:
                                 print(f"  Restoring: {current_file_path}")
                                 try:
                                     full_output_path.parent.mkdir(parents=True, exist_ok=True)
-                                    with full_output_path.open('w', encoding='utf-8', newline='\n') as out_f:
+                                    # Use 'w' with newline='' to prevent adding extra CR on Windows
+                                    # Let the content determine line endings.
+                                    with full_output_path.open('w', encoding='utf-8', newline='') as out_f:
                                         out_f.write(file_content)
                                 except IOError as e:
                                     print(f"Error writing file {full_output_path}: {e}")
                                 except Exception as e:
-                                     print(f"An unexpected error occurred writing {full_output_path}: {e}")
+                                    print(f"An unexpected error occurred writing {full_output_path}: {e}")
 
                         current_file_path = None
                         content_buffer = []
@@ -348,6 +403,11 @@ def restore_repo(input_file: Path, output_dir: Path):
                     if not relative_path_str:
                         print(f"Warning: Skipping empty file path found on line {line_num + 1}")
                         continue
+                    # Sanitize path for security (though Path usually handles this well)
+                    # Avoid paths trying to go outside the output_dir using '..'
+                    if ".." in relative_path_str:
+                        print(f"Warning: Skipping potentially unsafe path '{relative_path_str}' on line {line_num + 1}")
+                        continue
                     current_file_path = Path(relative_path_str)
                     content_buffer = []
                     state = 1 # Now look for the start code block
@@ -361,14 +421,14 @@ def restore_repo(input_file: Path, output_dir: Path):
                 # Else: Should have been transitioned out by marker check above
 
         if state != 0:
-             print(f"Warning: Dump file may have ended unexpectedly or parsing finished in an intermediate state ({state}).")
+            print(f"Warning: Dump file may have ended unexpectedly or parsing finished in an intermediate state ({state}).")
         if current_file_path is not None:
             print(f"Warning: Processing ended while handling file '{current_file_path}'. It might be incomplete.")
 
         print(f"\nSuccessfully finished attempting restoration to {output_dir}")
 
     except FileNotFoundError:
-         print(f"Error: Input dump file '{input_file}' not found.")
+        print(f"Error: Input dump file '{input_file}' not found.")
     except IOError as e:
         print(f"Error reading input file {input_file}: {e}")
     except Exception as e:
