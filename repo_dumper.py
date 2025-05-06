@@ -1,4 +1,5 @@
 import os
+import shutil
 import argparse
 import pathspec
 from pathlib import Path
@@ -281,6 +282,16 @@ def restore_repo(input_file: Path, output_dir: Path):
     if not input_file.is_file():
         print(f"Error: Input dump file '{input_file}' not found.")
         return
+    
+    if output_dir.exists():
+            print(f"Warning: Output directory '{output_dir}' already exists. It will be overwritten.")
+            userInput = input("Do you want to proceed? ([Y]/n): ").strip().lower()
+            if userInput in ['', 'true', 'y', 'yes']:
+                # Remove existing directory
+                shutil.rmtree(output_dir)
+            else:
+                print("Operation canceled.")
+                return
 
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
