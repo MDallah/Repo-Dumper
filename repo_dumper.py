@@ -9,8 +9,8 @@ GITIGNORE_FILE = ".gitignore"
 DEFAULT_OUTPUT_FILE = "./output/repo_dump.md"
 DEFAULT_RESTORE_DIR = "./output/restored_repo"
 FILE_NAME_MARKER = "###### File: "
-TREE_HEADER = "### Repository Structure:"
-CONTENT_HEADER = "### Repository Contents:"
+TREE_HEADER = "### Structure:"
+CONTENT_HEADER = "### Contents:"
 CODE_BLOCK_MARKER = "````````````"
 BINARY_CHUNK_SIZE = 1024 # Bytes to read for binary detection
 
