@@ -34,17 +34,17 @@ This command reads the repository at `/path/to/repo`, respects its `.gitignore` 
 
 ```bash
 # Basic dump to default output location ./output/repo_dump.md
-python repo_dumper.py dump /path/to/repo
+python repo2md.py dump /path/to/repo
 
 # Dump to a specific file
-python repo_dumper.py dump /path/to/repo -o my_repo_snapshot.md
+python repo2md.py dump /path/to/repo -o my_repo_snapshot.md
 
 # Dump with include/exclude patterns overriding .gitignore
 # Include all .py and .js files, even if ignored, but exclude the 'tests/' dir and specific docs
-python repo_dumper.py dump /path/to/repo -o output.md -i "*.py" "*.js" -e "tests/" "docs/internal/*"
+python repo2md.py dump /path/to/repo -o output.md -i "*.py" "*.js" -e "tests/" "docs/internal/*"
 
 # Example including a normally ignored directory (e.g., venv config) but excluding logs
-python repo_dumper.py dump . -o my_project_dump.md -i "venv/config/*" -e "*.log"
+python repo2md.py dump . -o my_project_dump.md -i "venv/config/*" -e "*.log"
 ```
 
 **Arguments & Options:**
@@ -59,7 +59,7 @@ python repo_dumper.py dump . -o my_project_dump.md -i "venv/config/*" -e "*.log"
 This command reads `repo_dump.md` and recreates the files and folders in the specified destination directory. Binary files noted in the dump (with `[Binary file content skipped]`) will be skipped during restoration, meaning those files will not be created.
 
 ```bash
-python repo_dumper.py restore repo_dump.md -d restored_repo
+python repo2md.py restore repo_dump.md -d restored_repo
 ```
 
 ## 📂 Example Output (`repo_dump.md`)
